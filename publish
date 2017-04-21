@@ -1,0 +1,66 @@
+#!/bin/bash
+
+for param
+do
+  if [ X$param = X-d ] ; then
+    OPTS=-d
+  fi
+done
+
+# setup modules on BCM chips
+if grep 'Hardware.*BCM' /proc/cpuinfo > /dev/null
+then
+  lsmod | grep i2c_dev >/dev/null || sudo modprobe i2c_dev
+  lsmod | grep i2c_bcm2708 >/dev/null || sudo modprobe i2c_cm2708 combined=Y
+  COMBINED=/sys/module/i2c_bcm2708/parameters/combined
+  grep Y $COMBINED >/dev/null || sudo sh -x "echo -n Y >$COMBINED"
+fi
+
+#setup modules on ODROID boards
+if grep "Hardware.*ODROID-C" /proc/cpuinfo > /dev/null
+then
+  lsmod | grep aml_i2c > /dev/null || sudo modprobe aml_i2c
+fi
+
+measure() {
+  # set 00111010
+  i2cset -y 1 0x60 0x26 0x3A
+
+  local val=0xff
+
+  while let "val != 0X38"  ; do
+     sleep .5
+     val=$(i2cget -y 1 0x60 0x26)
+  done
+
+  t1=$(i2cget -y 1 0x60 0x04)
+  t2=$(i2cget -y 1 0x60 0x05)
+
+  temp="$((t1)).$((t2))"
+  echo $temp
+}
+
+get_temp() {
+  local time=$(($1))
+
+  if let "time == 0" ; then
+    let time=15
+  fi
+
+  while true
+  do
+    measure
+    sleep $time
+  done
+}
+
+
+publish() {
+  exec mosquitto_pub $OPTS -l -t ark/temp
+}
+
+#trap 'kill -SIGHUP -$$; exit' SIGTERM SIGINT
+
+get_temp 15 | publish 
+
+
